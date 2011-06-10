@@ -14,53 +14,48 @@
  */
 
 /*
- * Calls up to the FUSE process.
+ * Test door calls to the FUSE daemon, same interface as used by:
+ * Similar to uts/common/fs/fusefs/fusefs_calls.c
  */
 
 #include <sys/param.h>
-#include <sys/systm.h>
-#include <sys/time.h>
-#include <sys/door.h>
-#include <sys/vnode.h>
+#include <sys/types.h>
 #include <sys/dirent.h>
-#include <sys/uio.h>
-#include <sys/sunddi.h>
-#include <sys/sysmacros.h>
-#include <sys/cmn_err.h>
-#include <sys/sdt.h>
-
 #include <sys/fs/fuse_door.h>
 
-#include "fusefs.h"
-#include "fusefs_calls.h"
-#include "fusefs_node.h"
-#include "fusefs_subr.h"
+#include <door.h>
+#include <errno.h>
+#include <fcntl.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <unistd.h>
+#include <umem.h>
 
-uint_t fusefs_genid = 0;
+#include "cli_calls.h"
+
 
 int
-fusefs_ssn_create(int doorfd, fusefs_ssn_t **ret_ssn)
+cli_ssn_create(char *door_path, fuse_ssn_t **ret_ssn)
 {
-	fusefs_ssn_t *ssn;
-	door_handle_t dh;
-	int err;
+	fuse_ssn_t *ssn;
+	int err, fd;
 
-	dh = door_ki_lookup(doorfd);
-	if (dh == NULL)
-		return (EINVAL);
+	fd = open(door_path, O_RDONLY, 0);
+	if (fd == -1)
+		return (errno);
 
-	ssn = kmem_zalloc(sizeof (*ssn), KM_SLEEP);
-	ssn->ss_door_handle = dh;
-	ssn->ss_genid = atomic_inc_uint_nv(&fusefs_genid);
+	ssn = umem_zalloc(sizeof (*ssn), UMEM_NOFAIL);
+	ssn->ss_door_handle = fd;
 	ssn->ss_max_iosize = FUSE_MAX_IOSIZE;
 
 	/*
 	 * Get attributes of this FUSE library program.
 	 */
-	err = fusefs_call_init(ssn, 0);
+	err = cli_call_init(ssn, 0);
 	if (err) {
-		FUSEFS_DEBUG("fusefs_call_init error %d\n", err);
-		fusefs_ssn_rele(ssn);
+		fprintf(stderr, "call_init, err %d\n", err);
+		cli_ssn_rele(ssn);
 		return (err);
 	}
 
@@ -70,47 +65,31 @@ fusefs_ssn_create(int doorfd, fusefs_ssn_t **ret_ssn)
 
 #if 0	/* XXX: not used for now */
 void
-fusefs_ssn_hold(fusefs_ssn_t *ssn)
+cli_ssn_hold(fuse_ssn_t *ssn)
 {
 }
 #endif
 
 /*ARGSUSED*/
 void
-fusefs_ssn_kill(fusefs_ssn_t *ssn)
+cli_ssn_kill(fuse_ssn_t *ssn)
 {
-	door_arg_t da;
-	struct fuse_generic_arg arg;
-	struct fuse_generic_ret ret;
-	int rc;
-
-	memset(&arg, 0, sizeof (arg));
-	arg.arg_opcode = FUSE_OP_DESTROY;
-	memset(&ret, 0, sizeof (ret));
-
-	memset(&da, 0, sizeof (da));
-	da.data_ptr = (void *)&arg;
-	da.data_size = sizeof (arg);
-	da.rbuf = (void *) &ret;
-	da.rsize = sizeof (ret);
-
-	(void) door_ki_upcall(ssn->ss_door_handle, &da);
+	/* XXX: Prevent further door calls... */
 }
 
 void
-fusefs_ssn_rele(fusefs_ssn_t *ssn)
+cli_ssn_rele(fuse_ssn_t *ssn)
 {
-	if (ssn->ss_door_handle != NULL)
-		door_ki_rele(ssn->ss_door_handle);
-	kmem_free(ssn, sizeof (*ssn));
+	close(ssn->ss_door_handle);
+	umem_free(ssn, sizeof (*ssn));
 }
 
 /*
- * Up-calls to the FUSE daemon.
+ * Door calls to the FUSE daemon.
  */
 
 int
-fusefs_call_init(fusefs_ssn_t *ssn, int want)
+cli_call_init(fuse_ssn_t *ssn, int want)
 {
 	door_arg_t da;
 	struct fuse_generic_arg arg;
@@ -128,7 +107,7 @@ fusefs_call_init(fusefs_ssn_t *ssn, int want)
 	da.rbuf = (void *) &ret;
 	da.rsize = sizeof (ret);
 
-	rc = door_ki_upcall(ssn->ss_door_handle, &da);
+	rc = door_call(ssn->ss_door_handle, &da);
 	if (rc != 0)
 		return (rc);
 	if (ret.ret_err != 0)
@@ -140,9 +119,8 @@ fusefs_call_init(fusefs_ssn_t *ssn, int want)
 	return (0);
 }
 
-
 int
-fusefs_call_statvfs(fusefs_ssn_t *ssn, statvfs64_t *stv)
+cli_call_statvfs(fuse_ssn_t *ssn, struct fuse_statvfs *stv)
 {
 	door_arg_t da;
 	struct fuse_generic_arg arg;
@@ -159,7 +137,7 @@ fusefs_call_statvfs(fusefs_ssn_t *ssn, statvfs64_t *stv)
 	da.rbuf = (void *) &ret;
 	da.rsize = sizeof (ret);
 
-	rc = door_ki_upcall(ssn->ss_door_handle, &da);
+	rc = door_call(ssn->ss_door_handle, &da);
 	if (rc != 0)
 		return (rc);
 
@@ -184,7 +162,7 @@ fusefs_call_statvfs(fusefs_ssn_t *ssn, statvfs64_t *stv)
 
 /*ARGSUSED*/
 int
-fusefs_call_fgetattr(fusefs_ssn_t *ssn,
+cli_call_fgetattr(fuse_ssn_t *ssn,
 	uint64_t fid, fusefattr_t *fap)
 {
 	door_arg_t da;
@@ -203,7 +181,7 @@ fusefs_call_fgetattr(fusefs_ssn_t *ssn,
 	da.rbuf = (void *) &ret;
 	da.rsize = sizeof (ret);
 
-	rc = door_ki_upcall(ssn->ss_door_handle, &da);
+	rc = door_call(ssn->ss_door_handle, &da);
 	if (rc != 0)
 		return (rc);
 
@@ -216,7 +194,7 @@ fusefs_call_fgetattr(fusefs_ssn_t *ssn,
 }
 
 int
-fusefs_call_getattr(fusefs_ssn_t *ssn,
+cli_call_getattr(fuse_ssn_t *ssn,
 	int rplen, const char *rpath,
 	fusefattr_t *fap)
 {
@@ -228,7 +206,7 @@ fusefs_call_getattr(fusefs_ssn_t *ssn,
 	if (rplen >= MAXPATHLEN)
 		return (ENAMETOOLONG);
 
-	argp = kmem_zalloc(sizeof (*argp), KM_SLEEP);
+	argp = umem_zalloc(sizeof (*argp), UMEM_NOFAIL);
 
 	argp->arg_opcode = FUSE_OP_GETATTR;
 	argp->arg_pathlen = rplen;
@@ -241,9 +219,9 @@ fusefs_call_getattr(fusefs_ssn_t *ssn,
 	da.rbuf = (void *) &ret;
 	da.rsize = sizeof (ret);
 
-	rc = door_ki_upcall(ssn->ss_door_handle, &da);
+	rc = door_call(ssn->ss_door_handle, &da);
 
-	kmem_free(argp, sizeof (*argp));
+	umem_free(argp, sizeof (*argp));
 	if (rc != 0)
 		return (rc);
 	if (ret.ret_err != 0)
@@ -254,7 +232,7 @@ fusefs_call_getattr(fusefs_ssn_t *ssn,
 }
 
 int
-fusefs_call_getattr2(fusefs_ssn_t *ssn,
+cli_call_getattr2(fuse_ssn_t *ssn,
 	int dnlen, const char *dname,
 	int cnlen, const char *cname,
 	fusefattr_t *fap)
@@ -275,7 +253,7 @@ fusefs_call_getattr2(fusefs_ssn_t *ssn,
 	if (plen >= MAXPATHLEN)
 		return (ENAMETOOLONG);
 
-	argp = kmem_zalloc(sizeof (*argp), KM_SLEEP);
+	argp = umem_zalloc(sizeof (*argp), UMEM_NOFAIL);
 
 	argp->arg_opcode = FUSE_OP_GETATTR;
 	argp->arg_pathlen = plen;
@@ -295,9 +273,9 @@ fusefs_call_getattr2(fusefs_ssn_t *ssn,
 	da.rbuf = (void *) &ret;
 	da.rsize = sizeof (ret);
 
-	rc = door_ki_upcall(ssn->ss_door_handle, &da);
+	rc = door_call(ssn->ss_door_handle, &da);
 
-	kmem_free(argp, sizeof (*argp));
+	umem_free(argp, sizeof (*argp));
 	if (rc != 0)
 		return (rc);
 
@@ -310,7 +288,7 @@ fusefs_call_getattr2(fusefs_ssn_t *ssn,
 
 /*ARGSUSED*/
 int
-fusefs_call_opendir(fusefs_ssn_t *ssn,
+cli_call_opendir(fuse_ssn_t *ssn,
 	int rplen, const char *rpath, uint64_t *ret_fid)
 {
 	door_arg_t da;
@@ -321,7 +299,7 @@ fusefs_call_opendir(fusefs_ssn_t *ssn,
 	if (rplen >= MAXPATHLEN)
 		return (ENAMETOOLONG);
 
-	argp = kmem_zalloc(sizeof (*argp), KM_SLEEP);
+	argp = umem_zalloc(sizeof (*argp), UMEM_NOFAIL);
 
 	argp->arg_opcode = FUSE_OP_OPENDIR;
 	argp->arg_pathlen = rplen;
@@ -334,9 +312,9 @@ fusefs_call_opendir(fusefs_ssn_t *ssn,
 	da.rbuf = (void *) &ret;
 	da.rsize = sizeof (ret);
 
-	rc = door_ki_upcall(ssn->ss_door_handle, &da);
+	rc = door_call(ssn->ss_door_handle, &da);
 
-	kmem_free(argp, sizeof (*argp));
+	umem_free(argp, sizeof (*argp));
 	if (rc != 0)
 		return (rc);
 	if (ret.ret_err != 0)
@@ -347,7 +325,7 @@ fusefs_call_opendir(fusefs_ssn_t *ssn,
 }
 
 int
-fusefs_call_closedir(fusefs_ssn_t *ssn, uint64_t fid)
+cli_call_closedir(fuse_ssn_t *ssn, uint64_t fid)
 {
 	door_arg_t da;
 	struct fuse_fid_arg arg;
@@ -365,7 +343,7 @@ fusefs_call_closedir(fusefs_ssn_t *ssn, uint64_t fid)
 	da.rbuf = (void *) &ret;
 	da.rsize = sizeof (ret);
 
-	rc = door_ki_upcall(ssn->ss_door_handle, &da);
+	rc = door_call(ssn->ss_door_handle, &da);
 	if (rc != 0)
 		return (rc);
 	if (ret.ret_err != 0)
@@ -375,8 +353,8 @@ fusefs_call_closedir(fusefs_ssn_t *ssn, uint64_t fid)
 }
 
 int
-fusefs_call_readdir(fusefs_ssn_t *ssn, uint64_t fid, int offset,
-	fusefattr_t *fap, dirent64_t *de, int *eofp)
+cli_call_readdir(fuse_ssn_t *ssn, uint64_t fid, int offset,
+	fusefattr_t *fap, struct fuse_dirent *de, int *eofp)
 {
 	door_arg_t da;
 	struct fuse_read_arg arg;
@@ -388,7 +366,7 @@ fusefs_call_readdir(fusefs_ssn_t *ssn, uint64_t fid, int offset,
 	arg.arg_fid = fid;
 	arg.arg_offset = offset;
 
-	retp = kmem_alloc(sizeof (*retp), KM_SLEEP);
+	retp = umem_alloc(sizeof (*retp), UMEM_NOFAIL);
 
 	memset(&da, 0, sizeof (da));
 	da.data_ptr = (void *)&arg;
@@ -396,7 +374,7 @@ fusefs_call_readdir(fusefs_ssn_t *ssn, uint64_t fid, int offset,
 	da.rbuf = (void *) retp;
 	da.rsize = sizeof (*retp);
 
-	rc = door_ki_upcall(ssn->ss_door_handle, &da);
+	rc = door_call(ssn->ss_door_handle, &da);
 	if (rc == 0)
 		rc = retp->ret_err;
 	if (rc != 0)
@@ -415,11 +393,7 @@ fusefs_call_readdir(fusefs_ssn_t *ssn, uint64_t fid, int offset,
 	}
 
 	*fap = retp->ret_st;
-	/* Convert (*de = retp->ret_de) */
-	de->d_ino = retp->ret_de.d_ino;
-	de->d_off = retp->ret_de.d_off;
-	de->d_reclen = nmlen;
-
+	*de = retp->ret_de;
 	/*
 	 * Copy the whole d_name field which actually
 	 * extends into the ret_name field following.
@@ -430,13 +404,13 @@ fusefs_call_readdir(fusefs_ssn_t *ssn, uint64_t fid, int offset,
 		*eofp = 1;
 
 out:
-	kmem_free(retp, sizeof (*retp));
+	umem_free(retp, sizeof (*retp));
 	return (rc);
 }
 
 /*ARGSUSED*/
 int
-fusefs_call_open(fusefs_ssn_t *ssn,
+cli_call_open(fuse_ssn_t *ssn,
 	int rplen, const char *rpath, int oflags, uint64_t *ret_fid)
 {
 	door_arg_t da;
@@ -447,7 +421,7 @@ fusefs_call_open(fusefs_ssn_t *ssn,
 	if (rplen >= MAXPATHLEN)
 		return (ENAMETOOLONG);
 
-	argp = kmem_zalloc(sizeof (*argp), KM_SLEEP);
+	argp = umem_zalloc(sizeof (*argp), UMEM_NOFAIL);
 
 	argp->arg_opcode = FUSE_OP_OPEN;
 	argp->arg_flags = oflags;
@@ -461,9 +435,9 @@ fusefs_call_open(fusefs_ssn_t *ssn,
 	da.rbuf = (void *) &ret;
 	da.rsize = sizeof (ret);
 
-	rc = door_ki_upcall(ssn->ss_door_handle, &da);
+	rc = door_call(ssn->ss_door_handle, &da);
 
-	kmem_free(argp, sizeof (*argp));
+	umem_free(argp, sizeof (*argp));
 	if (rc != 0)
 		return (rc);
 	if (ret.ret_err != 0)
@@ -474,7 +448,7 @@ fusefs_call_open(fusefs_ssn_t *ssn,
 }
 
 int
-fusefs_call_close(fusefs_ssn_t *ssn, uint64_t fid)
+cli_call_close(fuse_ssn_t *ssn, uint64_t fid)
 {
 	door_arg_t da;
 	struct fuse_fid_arg arg;
@@ -492,7 +466,7 @@ fusefs_call_close(fusefs_ssn_t *ssn, uint64_t fid)
 	da.rbuf = (void *) &ret;
 	da.rsize = sizeof (ret);
 
-	rc = door_ki_upcall(ssn->ss_door_handle, &da);
+	rc = door_call(ssn->ss_door_handle, &da);
 	if (rc != 0)
 		return (rc);
 	if (ret.ret_err != 0)
@@ -502,62 +476,55 @@ fusefs_call_close(fusefs_ssn_t *ssn, uint64_t fid)
 }
 
 int
-fusefs_call_read(fusefs_ssn_t *ssn,
-	uint64_t fid, uint32_t *rlen, uio_t *uiop,
-	int rplen, const char *rpath)
+cli_call_read(fuse_ssn_t *ssn,
+	uint64_t fid, off64_t offset, uint32_t length,
+	void *rd_data, uint32_t *ret_len)
 {
 	door_arg_t da;
-	struct fuse_read_arg *argp;
+	struct fuse_read_arg arg;
 	struct fuse_read_ret *retp;
 	int allocsize, rc;
 
 	/* Sanity check */
-	if (*rlen > FUSE_MAX_IOSIZE)
+	if (length > FUSE_MAX_IOSIZE)
 		return (EFAULT);
 
-	argp = kmem_zalloc(sizeof (*argp), KM_SLEEP);
-	argp->arg_opcode = FUSE_OP_READ;
-	argp->arg_fid = fid;
-	argp->arg_offset = uiop->uio_loffset;
-	argp->arg_length = *rlen;
-
-	/* Fuse wants the pathname here too. */
-	if (rplen > (MAXPATHLEN - 1))
-		rplen = MAXPATHLEN - 1;
-	argp->arg_pathlen = rplen;
-	memcpy(argp->arg_path, rpath, rplen+1);
+	memset(&arg, 0, sizeof (arg));
+	arg.arg_opcode = FUSE_OP_READ;
+	arg.arg_fid = fid;
+	arg.arg_offset = offset;
+	arg.arg_length = length;
 
 	/* XXX: Later, make allocsize dynamic. */
-	allocsize = sizeof (*retp);
-	retp = kmem_alloc(allocsize, KM_SLEEP);
+	allocsize = sizeof(*retp);
+	retp = umem_alloc(allocsize, UMEM_NOFAIL);
 
 	memset(&da, 0, sizeof (da));
-	da.data_ptr = (void *)argp;
-	da.data_size = sizeof (*argp);
+	da.data_ptr = (void *)&arg;
+	da.data_size = sizeof (arg);
 	da.rbuf = (void *) retp;
 	da.rsize = allocsize;
 
-	rc = door_ki_upcall(ssn->ss_door_handle, &da);
+	rc = door_call(ssn->ss_door_handle, &da);
 	if (rc == 0)
 		rc = retp->ret_err;
 	if (rc != 0)
 		goto out;
 
 	/* Length of data we read. */
-	*rlen = retp->ret_length;
-	rc = uiomove(retp->ret_data, *rlen, UIO_READ, uiop);
+	*ret_len = retp->ret_length;
+	memcpy(rd_data, retp->ret_data, *ret_len);
 
 out:
-	kmem_free(retp, allocsize);
-	kmem_free(argp, sizeof (*argp));
+	umem_free(retp, allocsize);
 	return (rc);
 }
 
 /*ARGSUSED*/
 int
-fusefs_call_write(fusefs_ssn_t *ssn,
-	uint64_t fid, uint32_t *rlen, uio_t *uiop,
-	int rplen, const char *rpath)
+cli_call_write(fuse_ssn_t *ssn,
+	uint64_t fid, off64_t offset, uint32_t length,
+	void *wr_data, uint32_t *ret_len)
 {
 	door_arg_t da;
 	struct fuse_write_arg *argp;
@@ -565,28 +532,19 @@ fusefs_call_write(fusefs_ssn_t *ssn,
 	int allocsize, rc;
 
 	/* Sanity check */
-	if (*rlen > FUSE_MAX_IOSIZE)
+	if (length > FUSE_MAX_IOSIZE)
 		return (EFAULT);
 
 	/* XXX: Later, make allocsize dynamic. */
-	allocsize = sizeof (*argp);
-	argp = kmem_alloc(allocsize, KM_SLEEP);
+	allocsize = sizeof(*argp);
+	argp = umem_alloc(allocsize, UMEM_NOFAIL);
 
 	argp->arg_opcode = FUSE_OP_WRITE;
 	argp->arg_fid = fid;
-	argp->arg_offset = uiop->uio_loffset;
-	argp->arg_length = *rlen;
+	argp->arg_offset = offset;
+	argp->arg_length = length;
 
-	/* Fuse wants the pathname here too. */
-	if (rplen > (MAXPATHLEN - 1))
-		rplen = MAXPATHLEN - 1;
-	argp->arg_pathlen = rplen;
-	memcpy(argp->arg_path, rpath, rplen+1);
-
-	/* XXX: Undo changes to uiop on error? */
-	rc = uiomove(argp->arg_data, *rlen, UIO_WRITE, uiop);
-	if (rc != 0)
-		goto out;
+	memcpy(argp->arg_data, wr_data, length);
 
 	memset(&da, 0, sizeof (da));
 	da.data_ptr = (void *)argp;
@@ -594,22 +552,22 @@ fusefs_call_write(fusefs_ssn_t *ssn,
 	da.rbuf = (void *) &ret;
 	da.rsize = sizeof (ret);
 
-	rc = door_ki_upcall(ssn->ss_door_handle, &da);
+	rc = door_call(ssn->ss_door_handle, &da);
 	if (rc == 0)
 		rc = ret.ret_err;
 	if (rc != 0)
 		goto out;
 
-	/* Length of data we read. */
-	*rlen = ret.ret_length;
+	/* Length of data we wrote. */
+	*ret_len = ret.ret_length;
 
 out:
-	kmem_free(argp, allocsize);
+	umem_free(argp, allocsize);
 	return (rc);
 }
 
 int
-fusefs_call_flush(fusefs_ssn_t *ssn, uint64_t fid)
+cli_call_flush(fuse_ssn_t *ssn, uint64_t fid)
 {
 	door_arg_t da;
 	struct fuse_fid_arg arg;
@@ -627,7 +585,7 @@ fusefs_call_flush(fusefs_ssn_t *ssn, uint64_t fid)
 	da.rbuf = (void *) &ret;
 	da.rsize = sizeof (ret);
 
-	rc = door_ki_upcall(ssn->ss_door_handle, &da);
+	rc = door_call(ssn->ss_door_handle, &da);
 	if (rc != 0)
 		return (rc);
 	if (ret.ret_err != 0)
@@ -640,7 +598,7 @@ fusefs_call_flush(fusefs_ssn_t *ssn, uint64_t fid)
 
 /*ARGSUSED*/
 int
-fusefs_call_create(fusefs_ssn_t *ssn,
+cli_call_create(fuse_ssn_t *ssn,
 	int dnlen, const char *dname,
 	int cnlen, const char *cname,
 	uint64_t *ret_fid)
@@ -650,14 +608,14 @@ fusefs_call_create(fusefs_ssn_t *ssn,
 
 /*ARGSUSED*/
 int
-fusefs_call_ftruncate(fusefs_ssn_t *ssn, uint64_t fid, u_offset_t off)
+cli_call_ftruncate(fuse_ssn_t *ssn, uint64_t fid, u_offset_t off)
 {
 	return (EACCES);
 }
 
 /*ARGSUSED*/
 int
-fusefs_call_truncate(fusefs_ssn_t *ssn,
+cli_call_truncate(fuse_ssn_t *ssn,
 	int rplen, const char *rpath, u_offset_t off)
 {
 	return (EACCES);
@@ -665,7 +623,7 @@ fusefs_call_truncate(fusefs_ssn_t *ssn,
 
 /*ARGSUSED*/
 int
-fusefs_call_utimes(fusefs_ssn_t *ssn,
+cli_call_utimes(fuse_ssn_t *ssn,
 	int rplen, const char *rpath,
 	timespec_t *atime, timespec_t *mtime)
 {
@@ -674,7 +632,7 @@ fusefs_call_utimes(fusefs_ssn_t *ssn,
 
 /*ARGSUSED*/
 int
-fusefs_call_chmod(fusefs_ssn_t *ssn,
+cli_call_chmod(fuse_ssn_t *ssn,
 	int rplen, const char *rpath, mode_t mode)
 {
 	return (EACCES);
@@ -682,7 +640,7 @@ fusefs_call_chmod(fusefs_ssn_t *ssn,
 
 /*ARGSUSED*/
 int
-fusefs_call_chown(fusefs_ssn_t *ssn,
+cli_call_chown(fuse_ssn_t *ssn,
 	int rplen, const char *rpath, uid_t uid, gid_t gid)
 {
 	return (EACCES);
@@ -690,7 +648,7 @@ fusefs_call_chown(fusefs_ssn_t *ssn,
 
 /*ARGSUSED*/
 int
-fusefs_call_delete(fusefs_ssn_t *ssn,
+cli_call_delete(fuse_ssn_t *ssn,
 	int rplen, const char *rpath)
 {
 	return (EACCES);
@@ -698,7 +656,7 @@ fusefs_call_delete(fusefs_ssn_t *ssn,
 
 /*ARGSUSED*/
 int
-fusefs_call_rename(fusefs_ssn_t *ssn,
+cli_call_rename(fuse_ssn_t *ssn,
 	int oldplen, const char *oldpath,
 	int ndirlen, const char *ndirpath,
 	int nnmlen, const char *newname)
@@ -708,7 +666,7 @@ fusefs_call_rename(fusefs_ssn_t *ssn,
 
 /*ARGSUSED*/
 int
-fusefs_call_mkdir(fusefs_ssn_t *ssn,
+cli_call_mkdir(fuse_ssn_t *ssn,
 	int ndirlen, const char *ndirpath,
 	int nnmlen, const char *newname)
 {
@@ -717,7 +675,7 @@ fusefs_call_mkdir(fusefs_ssn_t *ssn,
 
 /*ARGSUSED*/
 int
-fusefs_call_rmdir(fusefs_ssn_t *ssn,
+cli_call_rmdir(fuse_ssn_t *ssn,
 	int rplen, const char *rpath)
 {
 	return (EACCES);

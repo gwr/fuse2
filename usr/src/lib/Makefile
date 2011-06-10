@@ -46,11 +46,8 @@ include ../Makefile.master
 #
 SUBDIRS= \
 	libfoo	\
-	$($(MACH)_SUBDIRS)
+	libfuse
 
-i386_SUBDIRS=
-
-sparc_SUBDIRS=
 
 
 #
@@ -69,6 +66,15 @@ MSGSUBDIRS=	\
 sparc_MSGSUBDIRS=
 
 i386_MSGSUBDIRS=
+
+HDRSUBDIRS=	\
+	libfoo	\
+	libfuse \
+	$($(MACH)_HDRSUBDIRS)
+
+i386_HDRSUBDIRS=
+
+sparc_HDRSUBDIRS=
 
 all :=		TARGET= all
 check :=	TARGET= check

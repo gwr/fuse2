@@ -34,9 +34,6 @@ FILEMODE=644
 #		unix_bb_info.h:		Private interface to kcov
 #
 
-i386_HDRS=
-sparc_HDRS=
-
 # Generated headers
 GENHDRS=
 
@@ -73,12 +70,30 @@ CHECKHDRS= \
 	$($(MACH)_HDRS:%.h=%.check) \
 	$(CHKHDRS:%.h=%.check)
 
+FSHDRS=				\
+	fuse_door.h		\
+	fuse_ktypes.h		\
+	fusefs_mount.h
+
+ROOTDIR=	$(ROOT)/usr/include/sys
+
+ROOTDIRS=			\
+	$(ROOTDIR)		\
+	$(ROOTDIR)/fs
+
+ROOTHDRS=			\
+	$(HDRS:%=$(ROOTDIR)/%)
+
+ROOTFSHDRS= $(FSHDRS:%=$(ROOTDIR)/fs/%)
+
+
 all_h: $(GENHDRS)
 
 install_h:			\
 	$(ROOTDIRS)		\
 	.WAIT			\
 	$(ROOTHDRS)		\
+	$(ROOTFSHDRS)		\
 	$($(MACH)_ROOTHDRS)
 
 clean:
@@ -87,5 +102,16 @@ clean:
 clobber:	clean
 
 check:	$(CHECKHDRS)
+
+
+# install rules
+$(ROOTDIRS):
+	$(INS.dir)
+
+$(ROOTDIR)/%: %
+	$(INS.file)
+
+$(ROOTDIR)/fs/%: fs/%
+	$(INS.file)
 
 FRC:
