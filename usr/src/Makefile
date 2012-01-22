@@ -172,8 +172,15 @@ check:	$(CHKHDRSUBDIRS) $(CHKMFSTSUBDIRS) $(CHKMANSUBDIRS)
 XRPRUNE = pkg prototypes
 XRINCDIRS = uts/common head ucbhead
 
-cscope.out tags: FRC
-	$(XREF) -f -x $@
+TAGS: cscope.files
+	exctags -e -L - < cscope.files
+
+cscope.out tags: cscope.files
+	$(XREF) -f -x cscope.out
+
+cscope.files : FRC
+	find . -name '*.[ch]' -print > cscope.files.tmp
+	-mv -f cscope.files.tmp cscope.files
 
 TAGS: FRC
 	find uts common lib cmd -name '*.[ch]' -print |\
