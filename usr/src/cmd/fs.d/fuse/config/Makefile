@@ -10,24 +10,30 @@
 #
 
 #
-# Copyright 2011 Nexenta Systems, Inc.  All rights reserved.
+# Copyright 2012 Nexenta Systems, Inc.  All rights reserved.
 #
 
 #
 # cmd/fs.d/fuse/dtrace/Makefile
 #
 
-FSTYPE=		fuse
-TYPEPROG=	pkg-config
+PROG=	fuse.pc
 
-include		../../Makefile.fstype
+include		$(SRC)/cmd/Makefile.cmd
 
-all:	pkg-config
+ROOTLIBPKGCONF=  $(ROOTLIB)/pkgconfig
+FILEMODE = 0444
 
-catalog:
+all install: $(ROOTLIBPKGCONF)/$(PROG)
 
 lint:
 
 clean:
+
+$(ROOTLIBPKGCONF)/% : $(ROOTLIBPKGCONF) %
+	$(INS.file)
+
+$(ROOTLIBPKGCONF):
+	$(INS.dir)
 
 .KEEP_STATE:

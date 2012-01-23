@@ -11,7 +11,7 @@
 #
 
 #
-# Copyright 2011 Nexenta Systems, Inc.  All rights reserved.
+# Copyright 2012 Nexenta Systems, Inc.  All rights reserved.
 #
 
 cpu=`uname -p`
@@ -77,12 +77,12 @@ do
         mv $DEST/$f $DEST/$f.orig || :
       fi
     fi
-    echo "Update $f"
     cp $PROTO/$f $DEST/$f
   }
 done <<EOF
 usr/kernel/fs/${ARCH64}/fusefs
 usr/kernel/fs/fusefs
+usr/lib/pkgconfig/fuse.pc
 usr/lib/fs/fusefs/mount
 usr/lib/fs/fusefs/umount
 usr/lib/fuse/fioc
@@ -95,7 +95,6 @@ usr/lib/fuse/fusefs.d
 usr/lib/fuse/fusexmp
 usr/lib/fuse/hello
 usr/lib/fuse/null
-usr/lib/fuse/pkg-config
 usr/lib/libfuse.so.2.8
 usr/include/fuse/fuse.h
 usr/include/fuse/fuse_common.h
