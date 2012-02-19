@@ -6,7 +6,7 @@ syntax: glob
 *.o
 *.orig
 proto
-tmp/*
+tmp
 usr/src/TAGS
 usr/src/cscope.*
 usr/src/cmd/foo/amd64/*

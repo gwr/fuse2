@@ -130,6 +130,8 @@ struct fuse_ll {
 	int big_writes;
 #ifdef	__SOLARIS__
 	/* Not doing "lowlevel" stuff */
+	int multithread;
+	int running;
 #else
 	struct fuse_lowlevel_ops op;
 #endif
@@ -169,7 +171,7 @@ struct fuse_session *fuse_solaris_new_common(struct fuse_args *args,
 					void *userdata);
 void fuse_sol_door_destroy(void);
 int fuse_sol_mount1(const char *mountpoint, struct fuse_args *args);
-int fuse_sol_mount2(const char *mountpoint, struct fuse *f);
+int fuse_sol_mount2(void);
 void fuse_sol_unmount(const char *mountpoint, int fd);
 int fuse_fill_dir(void *dh_, const char *name, const struct stat *statp,
 		  off_t off);

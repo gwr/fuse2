@@ -45,7 +45,7 @@ static int did_mount;
  */
 /* ARGSUSED */
 int
-fuse_sol_door_create(struct fuse *f)
+fuse_sol_door_create()
 {
 	sigset_t oldmask, tmpmask;
 	int door_fd = -1;
@@ -129,7 +129,8 @@ struct mount_opts {
 	char *kernel_opts;
 };
 
-static struct mount_opts sol_mo;
+static char *sol_mntpt;
+static struct mount_opts sol_mopt;
 
 #define FUSE_DUAL_OPT_KEY(templ, key) 				\
 	FUSE_OPT_KEY(templ, key), FUSE_OPT_KEY("no" templ, key)
@@ -348,35 +349,35 @@ static int fuse_mount_core(const char *mountpoint, const char *opts)
  */
 int fuse_sol_mount1(const char *mountpoint, struct fuse_args *args)
 {
-	_NOTE(ARGUNUSED(mountpoint));
 	int res = -1;
 
-	memset(&sol_mo, 0, sizeof(sol_mo));
+	sol_mntpt = strdup(mountpoint);
+	memset(&sol_mopt, 0, sizeof(sol_mopt));
 	/* mount util should not try to spawn the daemon */
 	setenv("MOUNT_FUSEFS_SAFE", "1", 1);
 	/* to notify the mount util it's called from lib */
 	setenv("MOUNT_FUSEFS_CALL_BY_LIB", "1", 1);
 
 	if (args &&
-	    fuse_opt_parse(args, &sol_mo, fuse_mount_opts, fuse_mount_opt_proc) == -1)
+	    fuse_opt_parse(args, &sol_mopt, fuse_mount_opts, fuse_mount_opt_proc) == -1)
 		return -1;
 
 	if (solaris_debug)
-		printf("sol_mount1: kernel_opts=%s\n", sol_mo.kernel_opts);
+		printf("sol_mount1: kernel_opts=%s\n", sol_mopt.kernel_opts);
 
-	if (sol_mo.allow_other && sol_mo.allow_root) {
+	if (sol_mopt.allow_other && sol_mopt.allow_root) {
 		fprintf(stderr, "fuse: 'allow_other' and 'allow_root' options are mutually exclusive\n");
 		return -1;
 	}
-	if (sol_mo.ishelp)
+	if (sol_mopt.ishelp)
 		return 0;
 
 #if 0	/* XXX: Will do the actual mount later... */
-	res = fuse_mount_core(mountpoint, sol_mo.kernel_opts);
+	res = fuse_mount_core(mountpoint, sol_mopt.kernel_opts);
 #else
 	res = 0;
 #endif
-	/* Will free(sol_mo.kernel_opts) later too. */
+	/* Will free(sol_mopt.kernel_opts) later too. */
 
 	return res;
 }
@@ -384,15 +385,15 @@ int fuse_sol_mount1(const char *mountpoint, struct fuse_args *args)
 /*
  * Startup the door service and do the actual mount.
  */
-int fuse_sol_mount2(const char *mountpoint, struct fuse *f)
+int fuse_sol_mount2(void)
 {
 	int rc;
 
 	/*
 	 * XXX: Maybe call back-end INIT here?
 	 */
-	rc = fuse_sol_door_create(f);
-	rc = fuse_mount_core(mountpoint, sol_mo.kernel_opts);
+	rc = fuse_sol_door_create();
+	rc = fuse_mount_core(sol_mntpt, sol_mopt.kernel_opts);
 
 	return (rc);
 }
