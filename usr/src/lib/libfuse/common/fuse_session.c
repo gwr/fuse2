@@ -41,7 +41,7 @@ struct fuse_session *fuse_session_new(struct fuse_session_ops *op, void *data)
 
 	memset(se, 0, sizeof(*se));
 	se->op = *op;
-	se->data = data;
+	se->data = data;	/* fuse_ll */
 
 	return se;
 }

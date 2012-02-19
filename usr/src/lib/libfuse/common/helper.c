@@ -277,12 +277,6 @@ struct fuse *fuse_setup_common(int argc, char *argv[],
 	if (res == -1)
 		goto err_unmount;
 
-#ifdef	__SOLARIS__
-	res = fuse_sol_mount2(*mountpoint, fuse);
-	if (res == -1)
-		goto err_unmount;
-#endif	/* __SOLARIS__ */
-
 	res = fuse_set_signal_handlers(fuse_get_session(fuse));
 	if (res == -1)
 		goto err_unmount;

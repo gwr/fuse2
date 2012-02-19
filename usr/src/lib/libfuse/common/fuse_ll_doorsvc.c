@@ -60,6 +60,7 @@ struct fuse_pollhandle {
 static struct fuse		*solaris_fuse;
 static struct fuse_session	*solaris_se;
 static struct fuse_ll		*solaris_ll;
+static sema_t			solaris_mt_lock;
 int solaris_debug = 0;
 
 static void convert_stat(const struct stat *stbuf,
@@ -1135,6 +1136,13 @@ sol_dispatch(void *door_cookie, char *cargp, size_t argsz,
 	struct fuse_generic_ret ret = { 0 };
 	sol_ll_t *ll = solaris_ll;
 	int err = 0;
+	int mt;
+
+	/*
+	 * This may race during startup, but as long as
+	 * our mutex_enter/exit balance here, that's OK.
+	 */
+	mt = ll->multithread;
 
 	/*
 	 * Allow a NULL arg call to check if the
@@ -1153,8 +1161,9 @@ sol_dispatch(void *door_cookie, char *cargp, size_t argsz,
 
 	/*
 	 * Decode the op. code and dispatch.	
-	 * These return only on errors.
-	 * They all get a struct fuse_ll
+	 *
+	 * Note: Most of these do not return, instead
+	 * calling door_return (like thread exit).
 	 */
 	if (argsz < sizeof (*argp)) {
 		err = EINVAL;
@@ -1492,58 +1501,59 @@ static void fuse_sol_destroy(void *data)
  * This implementation does not support or use the "lowlevel" stuff.
  * Instead, this just creates a session that will dispatch the fusefs
  * door calls.
- * XXX: Want sol_ll_t here...
  */
 struct fuse_session *fuse_solaris_new_common(struct fuse_args *args,
 					     void *userdata)
 {
-	struct fuse_ll *f = NULL;
+	struct fuse_ll *ll = NULL;
 	struct fuse_session *se = NULL;
 	struct fuse_session_ops sop = {
 		.process = fuse_sol_process,
 		.destroy = fuse_sol_destroy,
 	};
 
-	f = (struct fuse_ll *) calloc(1, sizeof(struct fuse_ll));
-	if (f == NULL) {
+	ll = (struct fuse_ll *) calloc(1, sizeof(struct fuse_ll));
+	if (ll == NULL) {
 		fprintf(stderr, "fuse: failed to allocate fuse object\n");
 		goto errout;
 	}
 
-	f->conn.async_read = 1;
-	f->conn.max_write = UINT_MAX;
-	f->conn.max_readahead = UINT_MAX;
-	f->atomic_o_trunc = 0;
-	list_init_req(&f->list);
-	list_init_req(&f->interrupts);
-	fuse_mutex_init(&f->lock);
+	ll->conn.async_read = 1;
+	ll->conn.max_write = UINT_MAX;
+	ll->conn.max_readahead = UINT_MAX;
+	ll->atomic_o_trunc = 0;
+	list_init_req(&ll->list);
+	list_init_req(&ll->interrupts);
+	fuse_mutex_init(&ll->lock);
 
-	if (fuse_opt_parse(args, f, fuse_sol_opts, fuse_sol_opt_proc) == -1)
+	sema_init(&solaris_mt_lock, 1, USYNC_THREAD, NULL);
+
+	if (fuse_opt_parse(args, ll, fuse_sol_opts, fuse_sol_opt_proc) == -1)
 		goto errout;
 
-	if (f->debug) {
+	if (ll->debug) {
 		fprintf(stderr, "FUSE library version: %s\n", PACKAGE_VERSION);
 		solaris_debug = 1;
 	}
 
-	/* XXX: memcpy(&f->op, op, op_size); */
-	f->owner = getuid();
-	f->userdata = userdata;		/* struct fuse */
+	/* XXX: memcpy(&ll->op, op, op_size); */
+	ll->owner = getuid();
+	ll->userdata = userdata;		/* struct fuse */
 
-	se = fuse_session_new(&sop, f);
+	se = fuse_session_new(&sop, ll);
 	if (!se)
 		goto errout;
 
 	/* See top of file. */
 	solaris_fuse = userdata;
+	solaris_ll = ll;
 	solaris_se = se;
-	solaris_ll = f;
 
 	return se;
 
 errout:
-	if (f)
-		fuse_sol_destroy(f);
+	if (ll)
+		fuse_sol_destroy(ll);
 
 	return NULL;
 }
@@ -1676,24 +1686,36 @@ FUSE_SYMVER(".symver fuse_lowlevel_new_compat25,fuse_lowlevel_new@FUSE_2.5");
 /* Solaris "session loop" stuff. */
 
 /*
+ * The main program calls this, basically last.
  * This implementation does not use a worker loop.
- * Instead, we use a door - see libdoor(3lib).
- * This (the main thread) just waits for signals.
+ * Instead, we use a door (see libdoor(3lib))
+ * which calls sol_dispatch() from fusefs.
+ *
+ * Do the actual mount here (see comments in fuse_mount)
+ * then just wait for a termination signal.
  */
 static int
-fuse_session_loop_solaris(struct fuse_session *se)
+fuse_session_loop_solaris(struct fuse_session *se, int mt)
 {
-	int res = 0;
-	struct fuse_chan *ch = fuse_session_next_chan(se, NULL);
-	size_t bufsize = fuse_chan_bufsize(ch);
+	sol_ll_t *ll = se->data;
 	sigset_t sigmask;
 	int sig;
+	int res = 0;
 
-	sigfillset(&sigmask);
+	ll->multithread = mt;
+
+	res = fuse_sol_mount2();
+	if (res == -1)
+		goto out;
+
+	ll->running++;
 
 	/* temporary... */
+	sigfillset(&sigmask);
 	sigwait(&sigmask, &sig);
 	/* XXX: Any special signals? */
+
+	ll->running--;
 
 out:
 	fuse_session_reset(se);
@@ -1703,13 +1725,13 @@ out:
 int
 fuse_session_loop(struct fuse_session *se)
 {
-	return (fuse_session_loop_solaris(se));
+	return (fuse_session_loop_solaris(se, 0));
 }
 
 int
 fuse_session_loop_mt(struct fuse_session *se)
 {
-	return (fuse_session_loop_solaris(se));
+	return (fuse_session_loop_solaris(se, 1));
 }
 
 /*

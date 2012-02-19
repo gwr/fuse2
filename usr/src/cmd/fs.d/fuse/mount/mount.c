@@ -122,7 +122,7 @@ static const char * const optlist[] = {
 #define	OPT_ACDIRMAX	17
 	MNTOPT_ACDIRMAX,
 
-	/* fusefs-specifis options */
+	/* fusefs-specifis options (some from smbfs) */
 #define	OPT_SUBTYPE	18
 	"subtype",
 #define	OPT_USER	19
@@ -135,15 +135,23 @@ static const char * const optlist[] = {
 	"dirperms",
 #define	OPT_FILEPERMS	23
 	"fileperms",
-#define	OPT_NOPROMPT	24
-	"noprompt",
+#define	OPT_ALLOW_OTHER	24
+	"allow_other",
+#define	OPT_ALLOW_ROOT	25
+	"allow_root",
+#define	OPT_NONEMPTY	26
+	"nonempty",
+#define	OPT_RELATIME	27
+	"relatime",
+#define	OPT_FSNAME	28
+	"fsname",
+
 
 	NULL
 };
 
 static int Oflg = 0;    /* Overlay mounts */
 static int qflg = 0;    /* quiet - don't print warnings on bad options */
-static int noprompt = 0;	/* don't prompt for password */
 
 /* Note: fusefs uses _both_ kinds of options. */
 static int mntflags = MS_DATA | MS_OPTIONSTR;
@@ -535,8 +543,20 @@ setsubopt(struct fusefs_args *mdatap, char *subopt)
 		mdatap->file_mode = val;
 		break;
 
-	case OPT_NOPROMPT:
-		noprompt++;
+	case OPT_ALLOW_OTHER:
+		mdatap->file_mode = 0755;
+		break;
+
+	case OPT_ALLOW_ROOT:
+		break;
+
+	case OPT_NONEMPTY:
+		break;
+
+	case OPT_RELATIME:
+		break;
+
+	case OPT_FSNAME:
 		break;
 
 	default:

@@ -69,12 +69,8 @@ i386_MSGSUBDIRS=
 
 HDRSUBDIRS=	\
 	libfoo	\
-	libfuse \
-	$($(MACH)_HDRSUBDIRS)
+	libfuse
 
-i386_HDRSUBDIRS=
-
-sparc_HDRSUBDIRS=
 
 all :=		TARGET= all
 check :=	TARGET= check
